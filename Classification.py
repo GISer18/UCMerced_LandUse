@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import h5py
 from tensorflow.keras.callbacks import ModelCheckpoint,ReduceLROnPlateau,TensorBoard
 from sklearn.model_selection import train_test_split
-import pickle
 #%%
 def Unit(x,filters,pool=False):
     res = x
@@ -24,10 +23,7 @@ def Unit(x,filters,pool=False):
 
 def ResNet_MiniModel(input_shape,num_classes):
     images = keras.layers.Input(input_shape)
-    net = keras.layers.Conv2D(filters=32, kernel_size=[3, 3], strides=[1, 1], padding="same")(images)
-    net = Unit(net,32)
-    net = Unit(net,32)
-    net = Unit(net,32)
+    net = keras.layers.Conv2D(filters=64, kernel_size=[7, 7], strides=[1, 1], padding="same")(images)
 
     net = Unit(net,64,pool=True)
     net = Unit(net,64)
@@ -36,8 +32,12 @@ def ResNet_MiniModel(input_shape,num_classes):
     net = Unit(net,128,pool=True)
     net = Unit(net,128)
     net = Unit(net,128)
+    net = Unit(net,128)
 
     net = Unit(net, 256,pool=True)
+    net = Unit(net, 256)
+    net = Unit(net, 256)
+    net = Unit(net, 256)
     net = Unit(net, 256)
     net = Unit(net, 256)
     
@@ -58,6 +58,7 @@ def ResNet_MiniModel(input_shape,num_classes):
 print(K.image_data_format())
 model_name = 'log1'
 data_name = 'data'
+filepath='weights/%s.hdf5'%(model_name)
 
 tensorboard = TensorBoard(log_dir='./logs/1', histogram_freq=0,batch_size=128)  
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, min_lr=1e-5)
@@ -94,4 +95,8 @@ history = model.fit(data, label,
           callbacks=callbacks_list,
           verbose=1
          )
-#%%
+#%% save and load part
+#model_json = model.to_json()
+name = '%s_last'%(model_name)
+## save model and weight
+model.save('weights/%s.hdf5'%(name))
