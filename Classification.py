@@ -1,70 +1,23 @@
-from tensorflow import keras
-from tensorflow.keras import backend as K
+import keras
+from keras.applications.inception_resnet_v2 import InceptionResNetV2, preprocess_input
+from keras.models import Model
+from keras.layers import Dense, GlobalAveragePooling2D, AveragePooling2D, Flatten
+from keras import backend as K
 import matplotlib.pyplot as plt
 import h5py
-from tensorflow.keras.callbacks import ModelCheckpoint,ReduceLROnPlateau,TensorBoard
+from keras.callbacks import ModelCheckpoint,ReduceLROnPlateau,TensorBoard
 from sklearn.model_selection import train_test_split
 #%%
-def Unit(x,filters,pool=False):
-    res = x
-    if pool:
-        x = keras.layers.MaxPooling2D(pool_size=(2, 2))(x)
-        res = keras.layers.Conv2D(filters=filters,kernel_size=[1,1],strides=(2,2),padding="same")(res)
-    out = keras.layers.BatchNormalization()(x)
-    out = keras.layers.Activation("relu")(out)
-    out = keras.layers.Conv2D(filters=filters, kernel_size=[3, 3], strides=[1, 1], padding="same")(out)
-
-    out = keras.layers.BatchNormalization()(out)
-    out = keras.layers.Activation("relu")(out)
-    out = keras.layers.Conv2D(filters=filters, kernel_size=[3, 3], strides=[1, 1], padding="same")(out)
-
-    out = keras.layers.add([res,out])
-    return out
-
-def ResNet_MiniModel(input_shape,num_classes):
-    images = keras.layers.Input(input_shape)
-    net = keras.layers.Conv2D(filters=64, kernel_size=[7, 7], strides=[1, 1], padding="same")(images)
-
-    net = Unit(net,64,pool=True)
-    net = Unit(net,64)
-    net = Unit(net,64)
-
-    net = Unit(net,128,pool=True)
-    net = Unit(net,128)
-    net = Unit(net,128)
-    net = Unit(net,128)
-
-    net = Unit(net, 256,pool=True)
-    net = Unit(net, 256)
-    net = Unit(net, 256)
-    net = Unit(net, 256)
-    net = Unit(net, 256)
-    net = Unit(net, 256)
-    
-    net = Unit(net, 512,pool=True)
-    net = Unit(net, 512)
-    net = Unit(net, 512)
-
-    net = keras.layers.BatchNormalization()(net)
-    net = keras.layers.Activation("relu")(net)
-
-    net = keras.layers.GlobalAveragePooling2D()(net)
-    net = keras.layers.Flatten()(net)
-    net = keras.layers.Dense(units=num_classes,activation="sigmoid")(net)
-
-    model = keras.Model(inputs=images,outputs=net)
-    return model
-# In[2]:
 print(K.image_data_format())
-model_name = 'log1'
-data_name = 'data'
+model_name = 'log2'
+data_name = 'traintest'
 filepath='weights/%s.hdf5'%(model_name)
 
 tensorboard = TensorBoard(log_dir='./logs/1', histogram_freq=0,batch_size=128)  
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, min_lr=1e-5)
 checkpoint = ModelCheckpoint('weights/%s.{epoch:02d}-{val_loss:.2f}.hdf5'%(model_name), monitor='val_acc', verbose=0, save_best_only=True, mode='max')
 callbacks_list = [checkpoint,tensorboard]#,reduce_lr]
-# In[3]:
+#%%
 batch_size = 1
 num_classes = 17
 epochs = 500
@@ -76,10 +29,21 @@ print(list(hf.keys()))
 hf.close()
 #%%
 with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
-    data = f['img'][()]
-    label = f['label'][()]
+    x_train = f['x_train'][()]
+    x_test = f['x_test'][()]
+    y_train = f['y_train'][()]
+    y_test = f['y_test'][()]
 #%%
-model = ResNet_MiniModel(input_shape,num_classes)
+x_train = preprocess_input(x_train)
+x_test = preprocess_input(x_test)
+#%%
+base_model = InceptionResNetV2(weights=None, include_top=False,input_shape=(256,256,3))
+x = base_model.output
+x = AveragePooling2D((6,6))(x)
+x = Flatten()(x)
+predictions = Dense(17, activation='sigmoid')(x)
+model = Model(inputs=base_model.input, outputs=predictions)    
+#%%    
 optimizer = keras.optimizers.Adadelta()
 loss = 'binary_crossentropy'
 model.compile(optimizer= optimizer,
@@ -88,10 +52,10 @@ model.compile(optimizer= optimizer,
              )
 model.summary()
 # In[10]:
-history = model.fit(data, label, 
+history = model.fit(x_train, y_train, 
           batch_size=batch_size,
           epochs=epochs,
-          validation_split = 0.8,
+          validation_data = (x_test, y_test),
           callbacks=callbacks_list,
           verbose=1
          )
