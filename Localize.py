@@ -15,6 +15,7 @@ import pickle
 import time
 import itertools
 from skimage.io import imread, imsave
+from sklearn.cluster import KMeans
 
 from sklearn.metrics import confusion_matrix
 def get_confision_matrix(y,preds):
@@ -167,7 +168,7 @@ combine_class_rgb_value = [class_rgb_value[item] for item in classes]
 class_rgb_value = [[128,128,0],[255,0,0],[0,255,0],[0,255,255]]
 
 data_name ='traintest3'
-model_name = 'downclass4.88-0.27'
+model_name = 'downclass8(nearest).86-0.24'
 hf = h5py.File('dataset/%s.h5'%(data_name), 'r')
 print(list(hf.keys()))
 hf.close()
@@ -187,13 +188,12 @@ print('Loss =',score)
 #%%
 img_size = 256
 CNN_reso = 256
-CNN_channel = 512
+CNN_channel = 256
 ratio = img_size/CNN_reso # ratio to change resolution of output of last CNN channel
 dense_weight = model.layers[-1].get_weights()[0]
 #%%
 y_pred = model.predict(x_test,batch_size=1)
-theta = 0.5
-#%% classification
+theta = 0.55
 y_pred[y_pred>=theta] = 1
 y_pred[y_pred<theta] = 0
 y_pred = y_pred.astype(np.int16)
@@ -206,11 +206,13 @@ print('FA:        ',FA.mean())
 F_score = (2*Precision.mean()*DP.mean())/(Precision.mean()+DP.mean())
 print('F-score:   ',F_score)
 print('Kappa:     ',Kappa.mean())
+
 #%%
 for i in range(y_test.shape[0]):
     print(i,y_test[i],y_pred[i],np.equal(y_test[i],y_pred[i]).all())
-#%% 
-i = 412
+#%% 3,13,18,21,35,107,111
+plt.close()
+i = 0
 preds_class = np.where(y_pred[i]==1)
 print(y_test[i])
 print(y_pred[i])
@@ -235,7 +237,7 @@ for idx,class_idx in enumerate(preds_class[0]):
 #    layer_output = scipy.ndimage.zoom(layer_output, (ratio, ratio, 1), order=1) # scale the output of last CNN channel by raio dim: 112 x 112 x 128
     CAM = np.dot(layer_output.reshape((img_size*img_size, CNN_channel)), weight_GAP).reshape(img_size,img_size) # get Class Activation Map 
     plt.imshow(CAM,cmap='jet')
-    threshold = CAM.max()*0.2 #threshold CAM
+    threshold = CAM.max()*0.15 #threshold CAM
     CAM[CAM<threshold] = 0 
     plt.figure(99-idx)
     plt.xlabel(class_names[class_idx])
@@ -245,6 +247,7 @@ for idx,class_idx in enumerate(preds_class[0]):
 #    g = maxflow.Graph[int]()
 #    nodeids = g.add_grid_nodes(CAM.shape)
 #    g.add_grid_edges(nodeids, 1) 
+#    
 #    g.add_grid_tedges(nodeids, CAM, 255-CAM) 
 #    g.maxflow()
 #    sgm = g.get_grid_segments(nodeids)
@@ -254,22 +257,71 @@ for idx,class_idx in enumerate(preds_class[0]):
 #    mask = np.zeros((sgm.shape[0],sgm.shape[1],3),dtype=np.int16)
 #    mask[location[0],location[1],:] = class_rgb_value[class_idx]      
 #    plt.imshow(mask)
-plt.figure(idx+4)
+#plt.figure(idx+4)
+#plt.imshow(groundtruth_test[i])
+#%% for K-mean clustering
+#i = 13
+plt.figure(1)
+plt.imshow(x_test[i])
+preds_class = np.where(y_pred[i]==1)
+print(y_test[i])
+print(y_pred[i])
+print('Predict =',[class_names[idx] for idx in preds_class[0]])
+preds_class = np.where(y_pred[i]==1)
+plt.figure(2)
+get_last_conv_output = K.function([model.layers[0].input],
+                              [model.layers[-4].output])  #must be output from last CNN channel 
+layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
+
+x_for_cluster = layer_output.reshape(-1,layer_output.shape[2])
+#x_for_cluster = x_test[i].reshape(-1,x_test[i].shape[2])
+#kmeans = KMeans(n_clusters=y_test[i].sum(), random_state=0).fit(x_for_cluster)
+kmeans = KMeans(n_clusters=8, random_state=0).fit(x_for_cluster)
+kmeans_pred = kmeans.labels_
+
+plt.imshow(kmeans_pred.reshape(img_size,img_size))
+plt.figure(3)
 plt.imshow(groundtruth_test[i])
-
-
 #%% generate_heatmap_pixel
-heatmap = generate_heatmap(x_test,model)
-groundtruth_ratio = generate_groundtrurh_ratio(groundtruth_test,CNN_reso)
-np.save('heatmap.npy',heatmap)
-np.save('groundtruth_class_ratio.npy',groundtruth_ratio)
+#heatmap = generate_heatmap(x_test,model)
+#groundtruth_ratio = generate_groundtrurh_ratio(groundtruth_test,CNN_reso)
+#np.save('heatmap.npy',heatmap)
+#np.save('groundtruth_class_ratio.npy',groundtruth_ratio)
 
 #%%
-save_img = np.zeros((256,256,3))
-GB = np.zeros_like(CAM)
-save_img[:,:,0] = CAM
-save_img[:,:,1] = GB
-save_img[:,:,2] = GB
+from sklearn.mixture import GaussianMixture
+gmm4 = GaussianMixture(n_components = 4 , verbose = 1)
+gmm8 = GaussianMixture(n_components = 8 , verbose = 1)
+gmm4.fit(x_for_cluster)
+gmm8.fit(x_for_cluster)
+#print(gmm.means_)
+#print('\n')
+#print(gmm.covariances_)
+test4 = gmm4.predict(x_for_cluster).reshape(256,256)
+test8 = gmm8.predict(x_for_cluster).reshape(256,256)
+#%%
+plt.figure(1)
+plt.imshow(x_test[i])
+plt.figure(2)
+plt.imshow(test4)
+plt.figure(3)
+plt.imshow(groundtruth_test[i])
+#%%
+plt.figure(1)
+plt.imshow(x_test[i])
+plt.figure(2)
+plt.imshow(test8)
+plt.figure(3)
+plt.imshow(groundtruth_test[i])
+#%%
+from sklearn.metrics import adjusted_rand_score
+adjusted_rand_score(test4, test8)
+
+
+
+
+
 
 
 
