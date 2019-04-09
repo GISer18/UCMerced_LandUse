@@ -170,7 +170,6 @@ combine_class_rgb_value = [class_rgb_value[item] for item in classes]
 class_rgb_value = [[128,128,0],[255,0,0],[0,255,0],[0,255,255]]
 #%%
 data_name ='data(64x64)-train'
-#data_name ='data4'
 model_name = '64x64-6-filter=32'
 #%%
 hf = h5py.File('dataset/%s.h5'%(data_name), 'r')
@@ -188,15 +187,24 @@ with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
 x_test = (x_test/255.0).astype(np.float32)
 #%%
 with CustomObjectScope({'GlorotUniform': glorot_uniform()}):
-    model = load_model('weights/%s.hdf5'%(model_name))
+    base_model = load_model('weights/%s.hdf5'%(model_name))
+base_model.summary()
+#%%
+output = base_model.get_layer('class_output').output
+model = keras.Model(inputs=base_model.input, outputs=output)    
 model.summary()
+optimizer = keras.optimizers.Adadelta()
+model.compile(optimizer= optimizer,
+              loss="binary_crossentropy", 
+              metrics=['accuracy']
+             )
 #%%
 score = model.evaluate(x_test, y_test,batch_size=8)
 print('Loss =',score[0]) 
 print('Acc  =',score[1])   
 #%%
-img_size = 128
-CNN_reso = 128
+img_size = 64
+CNN_reso = 64
 CNN_channel = 128
 ratio = img_size/CNN_reso # ratio to change resolution of output of last CNN channel
 dense_weight = model.layers[-1].get_weights()[0]
