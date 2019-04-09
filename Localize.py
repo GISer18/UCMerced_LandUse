@@ -1,4 +1,3 @@
-from osgeo import gdal, osr, ogr
 import keras
 from keras.utils import CustomObjectScope
 from keras.initializers import glorot_uniform
@@ -9,13 +8,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import maxflow
 import scipy
-from keras.applications.inception_resnet_v2 import preprocess_input
 import cv2
 import pickle
 import time
 import itertools
-
+from skimage.io import imread, imsave
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import cohen_kappa_score
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import adjusted_rand_score
+
 def get_confision_matrix(y,preds):
     confusion_matrix = np.zeros((preds.shape[1],2,2))
     for pred_idx in range(len(y)):
@@ -152,17 +156,31 @@ class_rgb_value = np.array([[166,202,240],
                             [0,255,0],
                             [0,255,255]
                             ])
+land       = [1,11]
+man_made   = [0,2,3,5,6,9,10,13,14]
+vegetation = [4,7,8,15]
+water      = [12,16]
+classes = [land,man_made,vegetation,water]
+print([class_names[item] for item in land])
+print([class_names[item] for item in man_made])
+print([class_names[item] for item in vegetation])
+print([class_names[item] for item in water])
+class_names = ['land','man_made','vegetation','water']
+combine_class_rgb_value = [class_rgb_value[item] for item in classes]
+class_rgb_value = [[128,128,0],[255,0,0],[0,255,0],[0,255,255]]
 #%%
-multilabel = True
-model_name = 'logv.2_2-post.45-0.21'
-if multilabel:
-    data_name = 'traintest'
-else:
-    data_name = 'traintest2'
+data_name ='data(64x64)-train'
+#data_name ='data4'
+model_name = '64x64-6-filter=32'
+#%%
 hf = h5py.File('dataset/%s.h5'%(data_name), 'r')
 print(list(hf.keys()))
 hf.close()
-#%% download data from test set
+# download data from test set
+#with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
+#    x_test  = f['img'][()]
+#    y_test  = f['label'][()]
+#    groundtruth_test = f['groundtruth'][()]
 with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
     x_test  = f['x_test'][()]
     y_test  = f['y_test'][()]
@@ -170,124 +188,262 @@ with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
 x_test = (x_test/255.0).astype(np.float32)
 #%%
 with CustomObjectScope({'GlorotUniform': glorot_uniform()}):
-    model = load_model('weights/%s.hdf5'%(model_name) , custom_objects={"weighted_loss": 'binary_crossentropy'})
-#with open('weights/%s.pickle'%(model_name), 'rb') as input_file:
-#    e = pickle.load(input_file)
+    model = load_model('weights/%s.hdf5'%(model_name))
 model.summary()
 #%%
-#score = model.evaluate(x_test, y_test,batch_size=16)
-#print('Loss =',score[0])
-#print('Acc =',score[1])
+score = model.evaluate(x_test, y_test,batch_size=8)
+print('Loss =',score[0]) 
+print('Acc  =',score[1])   
 #%%
-img_size = 256
-CNN_reso = 64
-CNN_channel = 512
+img_size = 128
+CNN_reso = 128
+CNN_channel = 128
 ratio = img_size/CNN_reso # ratio to change resolution of output of last CNN channel
 dense_weight = model.layers[-1].get_weights()[0]
 #%%
-y_pred = model.predict(x_test,batch_size=16)
-theta = 0.6
+y_pred = model.predict(x_test,batch_size=8)
+theta = 0.5
+y_pred[y_pred>=theta] = 1
+y_pred[y_pred<theta] = 0
+y_pred = y_pred.astype(np.int16)
+cnf_matrix,OA,DP,FA,Precision, Kappa = get_confision_matrix(y_test,y_pred)
+print('Classification performance\n--------------------------')
+print('OA:        ',OA.mean())
+print('Precision: ',Precision.mean())
+print('DP,Recall: ',DP.mean())
+print('FA:        ',FA.mean())
+F_score = (2*Precision.mean()*DP.mean())/(Precision.mean()+DP.mean())
+print('F-score:   ',F_score)
+print('Kappa:     ',Kappa.mean())
+#%% 123,20,1000 , fail - 1234,1150
+plt.close()
+i = 1234
+preds_class = np.where(y_pred[i]==1)
+print(y_test[i])
+print(y_pred[i])
+print(preds_class[0])
+print('Predict =',[class_names[idx] for idx in preds_class[0]])
+plt.figure(1)
+plt.xlabel('Input')      
+plt.imshow(x_test[i])    
 #%%
-if multilabel:
-    y_pred[y_pred>=theta] = 1
-    y_pred[y_pred<theta] = 0
-    y_pred = y_pred.astype(np.int16)
-    cnf_matrix,OA,DP,FA,Precision, Kappa = get_confision_matrix(y_test,y_pred)
-    print('Classification performance\n--------------------------')
-    print('OA:        ',OA.mean())
-    print('Precision: ',Precision.mean())
-    print('DP,Recall: ',DP.mean())
-    print('FA:        ',FA.mean())
-    F_score = (2*Precision.mean()*DP.mean())/(Precision.mean()+DP.mean())
-    print('F-score:   ',F_score)
-    print('Kappa:     ',Kappa.mean())
-else:
-    y_pred = np.argmax(y_pred,axis=1)
-    y_pred = y_pred.reshape(-1,1)
-    y_true = np.array([y.argmax() for y in y_test]).reshape(-1,1)
-    cnf_matrix = confusion_matrix(y_true, y_pred)
-    np.set_printoptions(precision=2)
-    plt.figure()
-    plot_confusion_matrix(cnf_matrix, classes=class_names,
-                          title='Confusion matrix, without normalization')
-    from sklearn.metrics import cohen_kappa_score
-    print('kappa:',cohen_kappa_score(y_true,y_pred))
-    from sklearn.metrics import precision_score
-    print('precision:',precision_score(y_true, y_pred, average='macro')) 
-    from sklearn.metrics import recall_score
-    print('recall',recall_score(y_true, y_pred, average='macro')) 
-    class_count = np.zeros((1,17),dtype = np.uint16)
-    for i in range(y_true.shape[0]):
-        class_count[:,y_true[i]] += 1
-#%%
-if multilabel:
-    i = 0
-    preds_class = np.where(y_pred[i]==1)
-    print(y_test[i])
-    print(y_pred[i])
-    print(preds_class[0])
-    print('Predict =',[class_names[idx] for idx in preds_class[0]])
-    plt.imshow(x_test[i])      
-else:
-    i = 0
-    print(y_true[i])
-    print(y_pred[i])
-    plt.imshow(x_test[i])      
-#%%
-i = 0
-plt.imshow(x_test[i])
-if multilabel:
-    preds_class = np.where(y_pred[i]==1)
-    print(y_test[i])
-    print(y_pred[i])
-    print('Predict =',[class_names[idx] for idx in preds_class[0]])
-    preds_class = np.where(y_pred[i]==1)
-    for idx,class_idx in enumerate(preds_class[0]):
-        plt.figure(idx+2)
-        plt.xlabel(class_names[class_idx])
-        weight_GAP = dense_weight[:,class_idx] #weight of flatten channel
-        get_last_conv_output = K.function([model.layers[0].input],
-                                      [model.layers[-4].output])  #must be output from last CNN channel 
-        layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
-        layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
-        layer_output = scipy.ndimage.zoom(layer_output, (ratio, ratio, 1), order=1) # scale the output of last CNN channel by raio dim: 112 x 112 x 128
-        CAM = np.dot(layer_output.reshape((img_size*img_size, CNN_channel)), weight_GAP).reshape(img_size,img_size) # get Class Activation Map 
-        plt.imshow(CAM,cmap='jet')
-       #background/foreground segment by graphcut
-        CAM = 255 * (CAM-CAM.min())/(CAM.max() - CAM.min()) #normalize CAM to [0,255]
-        g = maxflow.Graph[int]()
-        nodeids = g.add_grid_nodes(CAM.shape)
-        g.add_grid_edges(nodeids, 1) 
-        g.add_grid_tedges(nodeids, CAM, 255-CAM) 
-        g.maxflow()
-        sgm = g.get_grid_segments(nodeids)
-        sgm = np.int_(np.logical_not(sgm))
-    #    plt.imshow(sgm,cmap='gray',alpha=1) #white is foreground
-        location = np.where(sgm==1)
-        mask = np.zeros((sgm.shape[0],sgm.shape[1],3),dtype=np.int16)
-        mask[location[0],location[1],:] = class_rgb_value[class_idx]      
-        plt.imshow(mask)
-    plt.figure(idx+3)
-    plt.imshow(groundtruth_test[i])
-else:
-    print(y_true[i])
-    print(y_pred[i])
-    weight_GAP = dense_weight[:,y_pred[i]] #weight of flatten channel
+preds_class = np.where(y_pred[i]==1)
+print(y_test[i])
+print(y_pred[i])
+all_CAM = np.zeros((y_pred[i].sum(),img_size,img_size))
+print('Predict =',[class_names[idx] for idx in preds_class[0]])
+for idx,class_idx in enumerate(preds_class[0]):
+    weight_GAP = dense_weight[:,class_idx] #weight of flatten channel
     get_last_conv_output = K.function([model.layers[0].input],
                                   [model.layers[-4].output])  #must be output from last CNN channel 
     layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
     layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
     layer_output = scipy.ndimage.zoom(layer_output, (ratio, ratio, 1), order=1) # scale the output of last CNN channel by raio dim: 112 x 112 x 128
     CAM = np.dot(layer_output.reshape((img_size*img_size, CNN_channel)), weight_GAP).reshape(img_size,img_size) # get Class Activation Map 
-    plt.figure(2)
+#    threshold = CAM.max()*0.0001 #threshold CAM
+#    CAM[CAM<threshold] = 0 
+    plt.figure(idx+2)
+    plt.xlabel(class_names[preds_class[0][idx]])
     plt.imshow(CAM,cmap='jet')
-#%% generate_heatmap_pixel
-heatmap = generate_heatmap(x_test,model)
-groundtruth_ratio = generate_groundtrurh_ratio(groundtruth_test,CNN_reso)
-np.save('heatmap.npy',heatmap)
-np.save('groundtruth_class_ratio.npy',groundtruth_ratio)
+#    CAM = (CAM-CAM.min()) / (CAM.max() - CAM.min())
+#    imsave('cam.png',CAM)
+#    plt.savefig('CAM.png',transparent=True)
+#    break
+    all_CAM[idx] = CAM
+plt.figure(10)
+plt.xlabel('Ground Truth')      
+plt.imshow(groundtruth_test[i])
+map_img = np.zeros((img_size,img_size,3),dtype = np.int16)
+map_img_class = np.zeros((img_size,img_size),dtype=np.int8)
+map_groundtruth_class = np.zeros((img_size,img_size),dtype=np.int8)
+for x in range(img_size):
+    for y in range(img_size):
+        map_img[x,y,:] = class_rgb_value[preds_class[0][np.where(all_CAM[:,x,y] == all_CAM[:,x,y].max())[0][0]]]
+        map_img_class[x,y] = preds_class[0][np.where(all_CAM[:,x,y] == all_CAM[:,x,y].max())[0][0]]
+        map_groundtruth_class[x,y] = np.where((groundtruth_test[i,x,y] == class_rgb_value).all(axis=1))[0][0]
+cnf_matrix = confusion_matrix(map_groundtruth_class.reshape(-1),map_img_class.reshape(-1),labels=[0,1,2,3])
+plt.figure(11)
+plt.xlabel('CAM mapping')      
+plt.imshow(map_img)
+#%% for K-mean clustering
+preds_class = np.where(y_pred[i]==1)
+print(y_test[i])
+print(y_pred[i])
+print('Predict =',[class_names[idx] for idx in preds_class[0]])
+preds_class = np.where(y_pred[i]==1)
+get_last_conv_output = K.function([model.layers[0].input],
+                              [model.layers[-4].output])  #must be output from last CNN channel 
+layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
 
+x_for_cluster = layer_output.reshape(-1,layer_output.shape[2])
+kmeans = KMeans(n_clusters=3, random_state=0).fit(x_for_cluster)
+kmeans_pred = kmeans.labels_
+plt.figure(4)
+plt.xlabel('K-Mean')      
+plt.imshow(kmeans_pred.reshape(img_size,img_size))
+#%% GaussianMixture
+GMM = GaussianMixture(n_components = 8 , verbose = 1)
+GMM.fit(x_for_cluster)
+GMM_pred = GMM.predict(x_for_cluster).reshape(256,256)
+plt.figure(5)
+plt.xlabel('GMM')      
+plt.imshow(GMM_pred)
 #%%
+from sklearn.metrics import adjusted_rand_score
+adjusted_rand_score(kmeans_pred, GMM_pred.reshape(-1))
+#%% for collect score CAM
+plt.close()
+cnf_matrix = np.zeros((4,4),dtype=np.int8)
+cnf_matrix = np.zeros((4,4))
+kappa0 = 0
+kappa1 = 0
+kappa2 = 0
+count = 0
+count2 = 0
+for i in range(x_test.shape[0]):
+    preds_class = np.where(y_pred[i]==1)
+    if(y_pred[i].sum()==0):
+        continue
+    all_CAM = np.zeros((y_pred[i].sum(),img_size,img_size))
+    for idx,class_idx in enumerate(preds_class[0]):
+        weight_GAP = dense_weight[:,class_idx] #weight of flatten channel
+        get_last_conv_output = K.function([model.layers[0].input],
+                                      [model.layers[-4].output])  #must be output from last CNN channel 
+        layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+        layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
+        CAM = np.dot(layer_output.reshape((img_size*img_size, CNN_channel)), weight_GAP).reshape(img_size,img_size) # get Class Activation Map 
+#        CAM = CAM + np.abs(CAM.min()) # shift test
+        all_CAM[idx] = CAM
+    map_img_class = np.zeros((img_size,img_size),dtype=np.int8)
+    map_groundtruth_class = np.zeros((img_size,img_size),dtype=np.int8)
+    for x in range(img_size):
+        for y in range(img_size):
+            map_img_class[x,y] = preds_class[0][np.where(all_CAM[:,x,y] == all_CAM[:,x,y].max())[0][0]]
+            map_groundtruth_class[x,y] = np.where((groundtruth_test[i,x,y] == class_rgb_value).all(axis=1))[0][0]
+    cnf_matrix+=confusion_matrix(map_groundtruth_class.reshape(-1),map_img_class.reshape(-1),labels=[0,1,2,3])
+    kappa_temp = cohen_kappa_score(map_groundtruth_class.reshape(-1),map_img_class.reshape(-1),labels=[0,1,2,3]) 
+    if np.isnan(kappa_temp):
+        kappa0+=0
+        kappa1+=1
+    else:
+        kappa0+=kappa_temp
+        kappa1+=kappa_temp
+        kappa2+=kappa_temp
+        count2+=1
+    count +=1
+    if i%10==0:
+#        print(i,'/',x_test.shape[0])
+        print(kappa0/count,kappa1/count,kappa2/count2,i,'/',x_test.shape[0])
+#%%
+OA = 100*(cnf_matrix[0,0] + cnf_matrix[1,1] + cnf_matrix[2,2] + cnf_matrix[3,3])/cnf_matrix.sum()
+DP = 0
+for i in range(cnf_matrix.shape[0]):
+    DP += cnf_matrix[i,i]/cnf_matrix.sum(axis=1)[i]
+DP = 100*DP/4
+
+FA = 0
+for i in range(cnf_matrix.shape[0]):
+    FA += (cnf_matrix.sum(axis=0)[i]-cnf_matrix[i,i]) / (np.diag(cnf_matrix).sum() + cnf_matrix.sum(axis=0)[i] -2*cnf_matrix[i,i])
+FA = 100*FA/4
+
+recall = np.diag(cnf_matrix) / np.sum(cnf_matrix, axis = 1)
+precision = np.diag(cnf_matrix) / np.sum(cnf_matrix, axis = 0)
+F_score = (2*precision.mean()*recall.mean())/(precision.mean()+recall.mean())
+#%%
+print('Localization performance\n--------------------------')
+print('OA:        ',OA)
+print('Precision: ',100*precision.mean())
+print('DP,Recall: ',DP)
+print('FA:        ',FA)
+print('F-score:   ',F_score)
+print('Kappa:     ',kappa0/count,kappa1/count)
+#%% machine learning
+#%% generate trrain
+x_for_cluster = np.zeros((420,int(256*256*0.1),256))
+for i in range(x_test.shape[0]):
+    get_last_conv_output = K.function([model.layers[0].input],
+                              [model.layers[-4].output])  #must be output from last CNN channel 
+    layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+    layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
+    layer_output = layer_output.reshape(-1,256)
+    x_for_cluster_train_temp, temp = train_test_split(layer_output,train_size = 0.1)
+    x_for_cluster[i] = x_for_cluster_train_temp
+    if i%10==0:
+        print(i,'/',x_test.shape[0])
+#%% 
+x_for_cluster = x_for_cluster.reshape(-1,256)
+kmeans = KMeans(n_clusters=4, random_state=0,verbose=1)
+kmeans.fit(x_for_cluster)
+GMM = GaussianMixture(n_components = 4 , verbose = 1)
+GMM.fit(x_for_cluster)
+#%%
+count = 0
+k_mean_R = 0
+GM_mean_R = 0
+for i in range(x_test.shape[0]):
+    preds_class = np.where(y_pred[i]==1)
+    if(y_pred[i].sum()==0):
+        continue
+    for idx,class_idx in enumerate(preds_class[0]):
+        weight_GAP = dense_weight[:,class_idx] #weight of flatten channel
+        get_last_conv_output = K.function([model.layers[0].input],
+                                      [model.layers[-4].output])  #must be output from last CNN channel 
+        layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+        layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
+    map_groundtruth_class = np.zeros((img_size,img_size),dtype=np.int8)
+    for x in range(img_size):
+        for y in range(img_size):
+            map_groundtruth_class[x,y] = np.where((groundtruth_test[i,x,y] == class_rgb_value).all(axis=1))[0][0]
+    x_for_cluster = layer_output.reshape(-1,layer_output.shape[2])
+    map_k_mean = kmeans.predict(x_for_cluster)
+    map_GM = GMM.predict(x_for_cluster)
+    
+    k_mean_R += adjusted_rand_score(map_k_mean,map_groundtruth_class.reshape(-1))
+    GM_mean_R+= adjusted_rand_score(map_GM,    map_groundtruth_class.reshape(-1))
+    count+=1
+    if i%10==0:
+        print(k_mean_R/count,GM_mean_R/count,i,'/',x_test.shape[0])
+#%%
+i=21
+    get_last_conv_output = K.function([model.layers[0].input],
+                              [model.layers[-4].output])  #must be output from last CNN channel 
+    layer_output = get_last_conv_output([x_test[i].reshape((1,img_size,img_size,3))])[0] #get output of last CNN channel
+    layer_output = np.squeeze(layer_output) # change from 1xNxNxCNNchannel to NxNxCNNchannel
+    x_for_cluster = layer_output.reshape(-1,layer_output.shape[2])
+    temp_k = kmeans.predict(x_for_cluster)
+    temp_GM = GMM.predict(x_for_cluster)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+#%% with input image
+def divide_image(x,gt,size):
+    new_x = np.empty((int(x.shape[0]*(np.power(int(x.shape[1]/size),2))),size,size,int(x.shape[3])),dtype=np.int16)
+    new_gt = np.empty((int(x.shape[0]*(np.power(int(x.shape[1]/size),2))),size,size,int(x.shape[3])),dtype=np.int16)
+    new_y = np.zeros((y.shape[0]*(np.power(int(x.shape[1]/size),2)),4),dtype=np.int8)
+    for i in range(x.shape[0]):
+        for j in range(int(x.shape[1]/size)):
+            for k in range(int(x.shape[1]/size)):
+                new_x[(np.power(int(x.shape[1]/size),2))*i + int(x.shape[1]/size)*j + k]  = x[i][size*j:size*(j+1),size*k:size*(k+1)]
+                new_gt[(np.power(int(x.shape[1]/size),2))*i + int(x.shape[1]/size)*j + k] = gt[i][size*j:size*(j+1),size*k:size*(k+1)]      
+    return new_x,new_gt
+#%%
+x_test,groundtruth_test = divide_image(x_test,groundtruth_test,img_size)
+
+
+
 
 
 
