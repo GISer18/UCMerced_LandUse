@@ -341,10 +341,40 @@ def divide_image(x,y,gt,change_rgb,size):
                     if (extract_color(new_gt[(np.power(int(x.shape[1]/size),2))*i + int(x.shape[1]/size)*j + k],change_rgb[l]).sum()) != 0:
                         new_y[(np.power(int(x.shape[1]/size),2))*i + int(x.shape[1]/size)*j + k][l] = 1
     return new_x,new_y,new_gt
+def sliding_window(img,window,stride,get_all = True):
+    col_start = 0
+    row_start = 0
+    index = 0
+    if(get_all==True):
+        total_col = np.ceil((img.shape[1]-window)/stride + 1)
+        total_row = np.ceil((img.shape[0]-window)/stride + 1)
+    elif (get_all == False):
+        total_col = np.floor((img.shape[1]-window)/stride + 1)
+        total_row = np.floor((img.shape[0]-window)/stride + 1)
+    sub_img = np.zeros((int(total_col*total_row ), window, window ),dtype=np.float32)
+    while True:    
+        if row_start+window <= img.shape[0]:
+            col_start = 0
+            while True:     
+                if col_start+window <= img.shape[1]:
+                    sub_img[index] = img[row_start:row_start + window,col_start:col_start + window]
+                    index+=1
+                    col_start+=stride
+                elif (col_start - stride + window + 1 <= img.shape[1] and get_all==True):
+                    col_start = img.shape[1]-window
+                else:
+                    break    
+            row_start+=stride    
+        elif (row_start - stride + window + 1 <= img.shape[0] and get_all==True):
+            row_start = img.shape[0]-window 
+        else:
+            break
+#    print(index , int(total_col*total_row ))
+    return sub_img
 #%%
-data_dir = r"D:\Thesis\Work2\UCMerced_LandUse\Images"
-label_dir = r"D:\Thesis\Work2\DLRSD\multi-labels.xlsx"
-groundtruth_dir = r"D:\Thesis\Work2\DLRSD\Images"
+#data_dir = r"D:\Thesis\Work2\UCMerced_LandUse\Images"
+#label_dir = r"D:\Thesis\Work2\DLRSD\multi-labels.xlsx"
+#groundtruth_dir = r"D:\Thesis\Work2\DLRSD\Images"
 class_names = ['airplane', 'baresoil', 'buildings', 'cars', 'chaparral',
                'court', 'dock', 'field', 'grass', 'mobilehome', 'pavement', 'sand',
                'sea', 'ship', 'tanks', 'trees', 'water'] 
@@ -369,10 +399,6 @@ class_rgb_value = np.array([[166,202,240],
 #%% 
 if __name__ == "__main__":
     data_name = 'data4'
-    with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
-        x = f['img'][()]
-        y = f['label'][()]
-        gt = f['groundtruth'][()]
     land       = [1,11]
     man_made   = [0,2,3,5,6,9,10,13,14]
     vegetation = [4,7,8,15]
@@ -384,54 +410,51 @@ if __name__ == "__main__":
     print([class_names[item] for item in water])
     class_names = ['land','man_made','vegetation','water']
     combine_class_rgb_value = [class_rgb_value[item] for item in classes]
-    change_rgb = [[128,128,0],[255,0,0],[0,255,0],[0,255,255]]
-#%%
-    size=64
-    new_x,new_y,new_gt = divide_image(x,y,gt,change_rgb,size)
-#%%
-    for i in range(0,new_x.shape[0]):
-        plt.figure(figsize=(5,5))
-        plt.subplot(2,3,1)
-        plt.imshow(new_x[i])
-        plt.subplot(2,3,3)
-        plt.imshow(new_gt[i])
-        plt.subplot(2,3,5)
-        plt.imshow(x[int(i/(np.power(int(x.shape[1]/size),2)))])
-        print(new_y[i])
-        plt.pause(1)
-        plt.close()
-#%%
-    data_name = 'data(64x64)'
-    hf = h5py.File('dataset/%s.h5'%(data_name), 'w')
-    hf.create_dataset('img',data=new_x)
-    hf.create_dataset('label',data=new_y)
-    hf.create_dataset('groundtruth',data=new_gt)
+    class_rgb_value = [[128,128,0],[255,0,0],[0,255,0],[0,255,255]]
+    #%% load test
+    hf = h5py.File('dataset/%s.h5'%(data_name), 'r')
+    print(list(hf.keys()))
     hf.close()
-#%%
-    with h5py.File(r"D:\Thesis\Work2\dataset\data(64x64).h5", 'r') as f:
-        x = f['img'][()]
-        y = f['label'][()]
-        groundtruth = f['groundtruth'][()]
-
-    x_train, x_test, y_train, y_test, groundtruth_train,groundtruth_test = train_test_split(x, y,groundtruth,
-                                                        test_size=0.2,
-                                                        random_state=42,
-                                                        stratify=y)
-    del x 
-    del y
-    del groundtruth
-    hf = h5py.File('dataset/data(64x64)-train.h5', 'w')
-    hf.create_dataset('x_train',data=x_train)
-    hf.create_dataset('x_test',data=x_test)
-    hf.create_dataset('y_train',data=y_train)
-    hf.create_dataset('y_test',data=y_test)
-    hf.create_dataset('groundtruth_train',data=groundtruth_train)
-    hf.create_dataset('groundtruth_test',data=groundtruth_test)
+    #%%
+    with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
+        img = f['img'][()]
+        label = f['label'][()]
+        groundtruth = f['groundtruth'][()] 
+    #%%
+    window = 8
+    stride = 8
+    total_col = np.floor((img[0,:,:,0].shape[1]-window)/stride + 1)
+    total_row = np.floor((img[0,:,:,0].shape[0]-window)/stride + 1)
+    sub_img = np.zeros((img.shape[0]*(int(total_col*total_row)), window, window , 3),dtype=np.int16)
+    sub_groundtruth = np.zeros((img.shape[0]*(int(total_col*total_row)), window, window , 3),dtype=np.int16)
+    for i in range (img.shape[0]):
+            for j in range (img.shape[3]):
+                sub_img[int(total_col*total_row)*i:int(total_col*total_row)*(i+1),:,:,j] = sliding_window(img[i,:,:,j],window,stride,get_all=False)
+    for i in range (groundtruth.shape[0]):
+            for j in range (groundtruth.shape[3]):
+                sub_groundtruth[int(total_col*total_row)*i:int(total_col*total_row)*(i+1),:,:,j] = sliding_window(groundtruth[i,:,:,j],window,stride,get_all=False)
+    #%% need to continue
+    map_groundtruth_class = np.zeros((img.shape[0]*(int(total_col*total_row)), window, window ),dtype=np.int8)
+    for i in range (sub_groundtruth.shape[0]):
+        for x in range(window):
+            for y in range(window):
+                map_groundtruth_class[i,x,y] = np.where((sub_groundtruth[i,x,y] == class_rgb_value).all(axis=1))[0][0]
+        if i%50000==0:
+            print(100*i/sub_groundtruth.shape[0])
+    #%%
+    map_groundtruth_class_label = np.zeros((img.shape[0]*(int(total_col*total_row))),dtype=np.int8)    
+    for i in range(map_groundtruth_class.shape[0]):
+        unique = np.unique(map_groundtruth_class[i])
+        total_num = np.zeros((4),dtype=np.int16)
+        for number in unique:
+            total_num[number] = (map_groundtruth_class[i]==number).sum()
+        map_groundtruth_class_label[i] = total_num.argmax()
+    #%%
+    hf = h5py.File(r"E:\Ice\dataset\data(8x8).h5", 'w')
+    hf.create_dataset('img',data=sub_img)
+    hf.create_dataset('label',data=map_groundtruth_class_label)
+    hf.create_dataset('groundtruth',data=sub_groundtruth)
     hf.close()
-    
-    
-    
-    
     
     
     
