@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 #%%
 print(K.image_data_format())
-model_name = '64x64-6-filter=64(branchwithaugment)'
+model_name = '64x64-6-filter=64(branchwithaugment)_test'
 data_name = 'data(64x64)-train'
 filepath='weights/%s.hdf5'%(model_name)
 tensorboard = TensorBoard(log_dir='./logs/64x64-7-filter=72(branchwithaugment)', histogram_freq=0,batch_size=128)  
@@ -115,8 +115,8 @@ losses = {
 	"class_output": "binary_crossentropy",
     }
 lossWeights = {
-        "image_output": 0.8, 
-        "class_output": 1.2
+        "image_output": 1, 
+        "class_output": 1
         }
 optimizer = keras.optimizers.Adadelta()
 model.compile(optimizer= optimizer,
@@ -130,15 +130,15 @@ print(x_train.min(),x_train.max())
 print(x_test.min(),x_test.max())
 #%%
 import imgaug.augmenters as iaa
-batch_size_aug = 1024
-aug_mal = 2
+batch_size_aug = 2048
+aug_mal = 1
 seq = iaa.Sequential([
   iaa.Fliplr(0.5),
   iaa.Flipud(0.5),
   iaa.Rot90((0,4)),
-  iaa.LogContrast((0.9,1.1), 0.5),
-  iaa.GammaContrast((0.9,1.1), 0.5),
-  iaa.PiecewiseAffine(scale=(0.01, 0.015)),
+#  iaa.LogContrast((0.9,1.1), 0.5),
+#  iaa.GammaContrast((0.9,1.1), 0.5),
+#  iaa.PiecewiseAffine(scale=(0.01, 0.015)),
 ])
 seq.show_grid([x_train[0], x_train[1], x_train[2], x_train[3]], cols=8, rows=8)
 #%%
