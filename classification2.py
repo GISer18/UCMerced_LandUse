@@ -49,7 +49,7 @@ with h5py.File('dataset/%s.h5'%(data_name), 'r') as f:
     y_test = f['y_test'][()]
 #%% simple model
 images = keras.layers.Input(input_shape)
-shortcut1 = keras.layers.Conv2D(filters=128, kernel_size=(1, 1),strides=(1,1), padding="same")(images)
+shortcut1 = keras.layers.Conv2D(filters=256, kernel_size=(1, 1),strides=(1,1), padding="same")(images)
 
 net = keras.layers.Conv2D(filters=64, kernel_size=(3, 3), padding="same")(images)
 net = keras.layers.BatchNormalization()(net)
@@ -78,9 +78,8 @@ net = keras.layers.Conv2D(filters=256, kernel_size=(3, 3), padding="same")(net)
 net = keras.layers.BatchNormalization()(net)
 net = keras.layers.Activation("relu")(net)
 
-
-net = keras.layers.Conv2D(filters=128, kernel_size=(3, 3), padding="same")(net)
-net = keras.layers.UpSampling2D(size=(4, 4), interpolation='bilinear')(net)
+net = keras.layers.Conv2D(filters=256, kernel_size=(3, 3), padding="same")(net)
+net = keras.layers.UpSampling2D(size=(4, 4), interpolation='nearest')(net)
 net = keras.layers.add([net,shortcut1])
 net = keras.layers.BatchNormalization()(net)
 net = keras.layers.Activation("relu")(net)
